@@ -72,6 +72,19 @@ public class Agent {
 		inventorySurvivalRate = params.vBInventorySurvivalRate();
 	}
 
+	/**
+	 * @return
+	 */
+	private boolean allBudgetsCompleted() {
+
+		for (var index = 0; index < numberOfGoods; index++) {
+			if (consumptionBudget[index] > 0) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	private void calculateConsumptionBudget() {
 		var saving = expectedIncome * savingPropensity;
 		var consumptionBudgetTotalAmount = Math.max(0, money + expectedIncome - saving);
@@ -84,6 +97,10 @@ public class Agent {
 		}
 	}
 
+	/**
+	 * @param income
+	 * @return
+	 */
 	public float[] consumption(float income) {
 		var expenses = new float[needs.length];
 
@@ -111,7 +128,8 @@ public class Agent {
 
 		var activeSuppliers = performMarketTransactions();
 
-		reorderSuppliers(activeSuppliers);
+		updateSuppliersList(activeSuppliers);
+		
 	}
 
 	/**
@@ -158,125 +176,11 @@ public class Agent {
 		return activeSuppliers;
 	}
 
-	private Agent[] selectBestSuppliers() {
-
-		var bestSuppliers = new Agent[numberOfGoods];
-
-		for (Agent currentSupplier : suppliers) {
-
-			var index = currentSupplier.productionIndex;
-
-			if (currentSupplier.inventory[index] > 0 && consumptionBudget[index] > 0) {
-
-				if (bestSuppliers[index] == null || currentSupplier.price < bestSuppliers[index].price) {
-					bestSuppliers[index] = currentSupplier;
-				}
-			}
-		}
-
-		// TODO Ça ne va pas du tout ! Il faut aussi tester qu'il a du stock à vendre !
-
-		return bestSuppliers;
-	}
-
-	private boolean allBudgetsCompleted() {
-
-		for (var index = 0; index < numberOfGoods; index++) {
-			if (consumptionBudget[index] > 0) {
-				return false;
-			}
-		}
-		return true;
-	}
-
-	private void reorderSuppliersBAK(Set<Agent> activeSuppliers) { // TODO remove me
-
-		var reordered = new LinkedList<Agent>();
-
-		reordered.addAll(activeSuppliers);
-
-		for (Agent s : suppliers) {
-			if (!activeSuppliers.contains(s)) {
-				reordered.add(s);
-			} // TODO le contraire peut-il survenir sans que ce soit une erreur ? A tester
-		}
-
-		suppliers = reordered;
-
-		if (suppliers.size() != suppliersListNormalSize) {
-			System.err.println(suppliers.size() + ", " + suppliersListNormalSize);
-			throw new IllegalStateException("Supplier list size is not equal to L.");
-		}
-	}
-
 	/**
-	 * @param activeSuppliers
+	 * 
 	 */
-	private void reorderSuppliers(Set<Agent> activeSuppliers) {
-
-		// TODO A renommer : updateSuppliersList()
-
-		// TODO Nouvelle méthode à TESTER
-
-		var reordered = new LinkedList<>(activeSuppliers);
-		reordered.addAll(suppliers);
-
-		if (suppliers.size() != suppliersListNormalSize) {
-			System.err.println(suppliers.size() + ", " + suppliersListNormalSize);
-			throw new IllegalStateException("Supplier list size is not equal to L.");
-		} // TODO on pourrait peut-être supprimer ce test ?
-
-		// Il faut maintenant renouveler partiellement la liste en supprimant
-		// les derniers items et en les remplaçant par de nouveaux, tirés au hasard dans
-		// la masse.
-	
-		// remove Lowest Ranked Suppliers
-		var size = suppliers.size();
-		if (size >= suppliersListNormalSize) {
-		    var fromIndex = size - numSuppliersToReject;
-		    suppliers.subList(fromIndex, size).clear();
-		}
-	}
-
 	public void postMarketActions() {
 		updateProductionPrice();
-	}
-
-	private void updateProductionPrice() {
-
-		int direction;
-
-		if (inventory[productionIndex] > 0) {
-			direction = -1;
-			macroData.addValue(MacroVariable.UNSOLD_VOLUME, productionIndex, inventory[productionIndex]);
-			macroData.addValue(MacroVariable.UNSOLD_VOLUME_POSITIF, productionIndex, 1);
-		} else {
-			direction = +1;
-			macroData.addValue(MacroVariable.UNSOLD_VOLUME_POSITIF, productionIndex, 0);
-			macroData.addValue(MacroVariable.UNSOLD_VOLUME, productionIndex, 0);
-		}
-
-		double amplitude = Math.abs(priceMomentum);
-
-		boolean reversal = (priceMomentum != 0.0) && (Math.signum(priceMomentum) != direction);
-
-		if (reversal) {
-			// freinage au retournement
-			amplitude *= gamma; // 0 < gamma < 1
-		} else {
-			// accélération
-			amplitude += momentumGain; // α
-		}
-
-		// éviter amplitude négative si gros choc négatif
-		amplitude = Math.max(0.0, amplitude);
-
-		priceMomentum = direction * amplitude;
-
-		price *= Math.exp(priceSensitivity * priceMomentum);
-
-		macroData.addValue(MacroVariable.MAX_PRICE, productionIndex, price);
-		macroData.addValue(MacroVariable.MIN_PRICE, productionIndex, price);
 	}
 
 	/**
@@ -330,8 +234,9 @@ public class Agent {
 	private void searchNewSuppliers() {
 
 		int missing = suppliersListNormalSize - suppliers.size();
-		if (missing <= 0)
-			return;
+
+		if (suppliers.size() >= suppliersListNormalSize)
+			throw new IllegalArgumentException();
 
 		if (suppliersListNormalSize > world.getNumberOfAgents() - 1) {
 			throw new IllegalArgumentException("Supplier list size exceeds available population.");
@@ -358,6 +263,52 @@ public class Agent {
 			throw new IllegalStateException("Supplier list size is not equal to L.");
 		}
 
+	}
+
+	/**
+	 * @return
+	 */
+	private Agent[] selectBestSuppliers() {
+
+		var bestSuppliers = new Agent[numberOfGoods];
+
+		for (Agent currentSupplier : suppliers) {
+
+			var index = currentSupplier.productionIndex;
+
+			if (currentSupplier.inventory[index] > 0 && consumptionBudget[index] > 0) {
+
+				if (bestSuppliers[index] == null || currentSupplier.price < bestSuppliers[index].price) {
+					bestSuppliers[index] = currentSupplier;
+				}
+			}
+		}
+
+		return bestSuppliers;
+	}
+
+	/**
+	 * @return
+	 */
+	private Agent[] selectBestSuppliers_BAK() { // TODO Remove Me
+
+		var bestSuppliers = new Agent[numberOfGoods];
+
+		for (Agent currentSupplier : suppliers) {
+
+			var index = currentSupplier.productionIndex;
+
+			if (currentSupplier.inventory[index] > 0 && consumptionBudget[index] > 0) {
+
+				if (bestSuppliers[index] == null || currentSupplier.price < bestSuppliers[index].price) {
+					bestSuppliers[index] = currentSupplier;
+				}
+			}
+		}
+
+		// TODO Ça ne va pas du tout ! Il faut aussi tester qu'il a du stock à vendre !
+
+		return bestSuppliers;
 	}
 
 	/**
@@ -416,6 +367,73 @@ public class Agent {
 
 	public void setWorld(World world) {
 		this.world = world;
+	}
+
+	/**
+	 * 
+	 */
+	private void updateProductionPrice() {
+
+		int direction;
+
+		if (inventory[productionIndex] > 0) {
+			direction = -1;
+			macroData.addValue(MacroVariable.UNSOLD_VOLUME, productionIndex, inventory[productionIndex]);
+			macroData.addValue(MacroVariable.UNSOLD_VOLUME_POSITIF, productionIndex, 1);
+		} else {
+			direction = +1;
+			macroData.addValue(MacroVariable.UNSOLD_VOLUME_POSITIF, productionIndex, 0);
+			macroData.addValue(MacroVariable.UNSOLD_VOLUME, productionIndex, 0);
+		}
+
+		double amplitude = Math.abs(priceMomentum);
+
+		boolean reversal = (priceMomentum != 0.0) && (Math.signum(priceMomentum) != direction);
+
+		if (reversal) {
+			// freinage au retournement
+			amplitude *= gamma; // 0 < gamma < 1
+		} else {
+			// accélération
+			amplitude += momentumGain; // α
+		}
+
+		// éviter amplitude négative si gros choc négatif
+		amplitude = Math.max(0.0, amplitude);
+
+		priceMomentum = direction * amplitude;
+
+		price *= Math.exp(priceSensitivity * priceMomentum);
+
+		macroData.addValue(MacroVariable.MAX_PRICE, productionIndex, price);
+		macroData.addValue(MacroVariable.MIN_PRICE, productionIndex, price);
+	}
+
+	/**
+	 * @param activeSuppliers
+	 */
+	private void updateSuppliersList(Set<Agent> activeSuppliers) {
+
+		// TODO Nouvelle méthode à TESTER
+
+		var reordered = new LinkedList<>(activeSuppliers);
+		reordered.addAll(suppliers);
+
+		if (suppliers.size() != suppliersListNormalSize) {
+			System.err.println(suppliers.size() + ", " + suppliersListNormalSize);
+			throw new IllegalStateException("Supplier list size is not equal to L.");
+		} // TODO on pourrait peut-être supprimer ce test ?
+
+		// Il faut maintenant renouveler partiellement la liste en supprimant
+		// les derniers items et en les remplaçant par de nouveaux, tirés au hasard dans
+		// la masse.
+	
+		// remove Lowest Ranked Suppliers
+		var size = suppliers.size();
+		if (size >= suppliersListNormalSize) {
+		    var fromIndex = size - numSuppliersToReject;
+		    suppliers.subList(fromIndex, size).clear();
+		}
 	}
 
 }
