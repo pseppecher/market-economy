@@ -1,0 +1,408 @@
+package model260312.agents;
+
+import java.util.LinkedHashSet;
+import java.util.LinkedList;
+import java.util.Set;
+
+import model260312.data.MacroData;
+import model260312.data.MacroVariable;
+import model260312.parameters.Parameters;
+
+public class Agent {
+
+	// Paramètres de l'agent
+
+	final private int numberOfGoods;
+	final float[] needs;
+	final float[] productivity;
+	final private float sectorReviewProbability;
+	final private float savingPropensity;
+	final private int suppliersListNormalSize;
+	final private int marketMaxIteration;
+	final private int numSuppliersToReject;
+
+	// Variables d'état
+
+	private World world;
+	private Integer productionIndex;
+	final private float[] inventory;
+	private float[] consumptionBudget;
+	private float money;
+	private float price;
+	private float expectedIncome;
+	/**
+	 * État qui accumule l’effet des étapes successives et la direction de la
+	 * recherche du prix.
+	 */
+	private double priceMomentum = 0;
+
+	private MacroData macroData;
+
+	private LinkedList<Agent> suppliers = new LinkedList<Agent>();
+	/**
+	 * momentumGain = alpha = renforcement systématique
+	 */
+	private final float momentumGain;
+
+	/**
+	 * priceSensitivity = beta = coefficient multiplicatif pour le prix
+	 */
+	private final float priceSensitivity;
+
+	/**
+	 * Coup de frein en cas de changement de direction
+	 */
+	private final float gamma;
+
+	private final float inventorySurvivalRate;
+
+	public Agent(Parameters params) {
+		numberOfGoods = params.nSector();
+		needs = new float[numberOfGoods];
+		productivity = new float[numberOfGoods];
+		sectorReviewProbability = params.sectorReviewProbability();
+		savingPropensity = params.savingPropensity();
+		suppliersListNormalSize = params.suppliersListNormalSize();
+		inventory = new float[numberOfGoods];
+		marketMaxIteration = params.marketMaxIteration();
+		numSuppliersToReject = (int) (suppliersListNormalSize * params.supplierTurnoverRate());
+		priceSensitivity = params.vBAgentPriceSensitivity();
+		gamma = params.vBAgentGamma();
+		momentumGain = params.vBAgentMomentumGain();
+		inventorySurvivalRate = params.vBInventorySurvivalRate();
+	}
+
+	private void calculateConsumptionBudget() {
+		var saving = expectedIncome * savingPropensity;
+		var consumptionBudgetTotalAmount = Math.max(0, money + expectedIncome - saving);
+		if (consumptionBudgetTotalAmount < 0) {
+			throw new RuntimeException("consumptionBudgetTotalAmount should not be negative.");
+		}
+		consumptionBudget = consumption(consumptionBudgetTotalAmount);
+		for (var index = 0; index < numberOfGoods; index++) {
+			macroData.addValue(MacroVariable.CONSUMPTION_BUDGET, index, consumptionBudget[index]);
+		}
+	}
+
+	public float[] consumption(float income) {
+		var expenses = new float[needs.length];
+
+		var sum = 0.0f;
+		for (var w : needs) {
+			sum += w;
+		}
+		if (sum == 0.0) {
+			return expenses; // aucun besoin déclaré → aucune dépense
+		}
+
+		for (var i = 0; i < needs.length; i++) {
+			expenses[i] = income * (needs[i] / sum);
+		}
+
+		return expenses;
+	}
+
+	public void marketActions() {
+
+		searchNewSuppliers();
+		market();
+
+	}
+
+	private void market() {
+
+		if (suppliers.size() != suppliersListNormalSize) {
+			System.err.println(suppliers.size() + ", " + suppliersListNormalSize);
+			throw new IllegalStateException("Supplier list size is not equal to L.");
+		}
+
+		var activeSuppliers = performMarketTransactions();
+
+		reorderSuppliers(activeSuppliers);
+	}
+
+	private Set<Agent> performMarketTransactions() {
+
+		var activeSuppliers = new LinkedHashSet<Agent>();
+
+		for (var iter = 0; iter < marketMaxIteration; iter++) {
+
+			if (allBudgetsCompleted())
+				break;
+
+			var bestSuppliers = selectBestSuppliers();
+
+			for (var index = 0; index < numberOfGoods; index++) {
+
+				if (consumptionBudget[index] > 0 && bestSuppliers[index] != null) {
+
+					var supplier = bestSuppliers[index];
+
+					var offerTotalValue = supplier.inventory[index] * supplier.price;
+					var transactionValue = Math.min(offerTotalValue, consumptionBudget[index]);
+					var transactionVolume = Math.min(supplier.inventory[index], transactionValue / supplier.price);
+
+					money -= transactionValue;
+					supplier.money += transactionValue;
+
+					consumptionBudget[index] -= transactionValue;
+					supplier.inventory[index] -= transactionVolume;
+
+					activeSuppliers.add(supplier);
+
+					macroData.addValue(MacroVariable.CONSUMPTION_VALUE, index, transactionValue);
+					macroData.addValue(MacroVariable.CONSUMPTION_VOLUME, index, transactionVolume);
+
+					var laborUsed = transactionVolume / supplier.productivity[index];
+					macroData.addValue(MacroVariable.LABOR_USED, index, laborUsed);
+				}
+			}
+		}
+
+		return activeSuppliers;
+	}
+
+	private Agent[] selectBestSuppliers() {
+
+		var bestSuppliers = new Agent[numberOfGoods];
+
+		for (Agent currentSupplier : suppliers) {
+
+			var index = currentSupplier.productionIndex;
+
+			if (currentSupplier.inventory[index] > 0 && consumptionBudget[index] > 0) {
+
+				if (bestSuppliers[index] == null || currentSupplier.price < bestSuppliers[index].price) {
+					bestSuppliers[index] = currentSupplier;
+				}
+			}
+		}
+		
+		// TODO Ça ne va pas du tout ! Il faut aussi tester qu'il a du stock à vendre ! 
+
+		return bestSuppliers;
+	}
+
+	private boolean allBudgetsCompleted() {
+
+		for (var index = 0; index < numberOfGoods; index++) {
+			if (consumptionBudget[index] > 0) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private void reorderSuppliersBAK(Set<Agent> activeSuppliers) { // TODO remove me
+
+		var reordered = new LinkedList<Agent>();
+
+		reordered.addAll(activeSuppliers);
+
+		for (Agent s : suppliers) {
+			if (!activeSuppliers.contains(s)) {
+				reordered.add(s);
+			} // TODO le contraire peut-il survenir sans que ce soit une erreur ? A tester
+		}
+
+		suppliers = reordered;
+
+		if (suppliers.size() != suppliersListNormalSize) {
+			System.err.println(suppliers.size() + ", " + suppliersListNormalSize);
+			throw new IllegalStateException("Supplier list size is not equal to L.");
+		}
+	}
+
+	private void reorderSuppliers(Set<Agent> activeSuppliers) {
+
+		// TODO A renommer : updateSuppliersList()
+		
+		// TODO Nouvelle méthode à TESTER
+		
+		var reordered = new LinkedList<>(activeSuppliers);
+		reordered.addAll(suppliers);
+		
+		if (suppliers.size() != suppliersListNormalSize) {
+			System.err.println(suppliers.size() + ", " + suppliersListNormalSize);
+			throw new IllegalStateException("Supplier list size is not equal to L.");
+		} // TODO on pourrait peut-être supprimer ce test
+		
+		// TODO C'est ici qu'il faudrait renouveler partiellement la liste en supprimant les derniers items et en les remplaçant par de nouveaux, tirés au hasard dans la masse, voir la méthode removeLowestRankedSuppliers()
+	}
+
+	public void postMarketActions() {
+		updateProductionPrice();
+		removeLowestRankedSuppliers();
+	}
+
+	private void removeLowestRankedSuppliers() {
+		final int suppliersListSize = suppliers.size();
+		if (suppliersListSize >= suppliersListNormalSize) {
+			suppliers.subList(suppliersListSize - numSuppliersToReject, suppliers.size()).clear();
+		}
+	}
+
+	private void updateProductionPrice() {
+
+		int direction;
+
+		if (inventory[productionIndex] > 0) {
+			direction = -1;
+			macroData.addValue(MacroVariable.UNSOLD_VOLUME, productionIndex, inventory[productionIndex]);
+			macroData.addValue(MacroVariable.UNSOLD_VOLUME_POSITIF, productionIndex, 1);
+		} else {
+			direction = +1;
+			macroData.addValue(MacroVariable.UNSOLD_VOLUME_POSITIF, productionIndex, 0);
+			macroData.addValue(MacroVariable.UNSOLD_VOLUME, productionIndex, 0);
+		}
+
+		//double noise = world.random().nextGaussian(); // ε ~ N(0,1)
+
+		double amplitude = Math.abs(priceMomentum);
+
+		boolean reversal = (priceMomentum != 0.0) && (Math.signum(priceMomentum) != direction);
+
+		if (reversal) {
+			// freinage au retournement
+			amplitude *= gamma; // 0 < gamma < 1
+		} else {
+			// accélération
+			amplitude += momentumGain; // α
+		}
+
+		// bruit proportionnel à l'échelle actuelle
+		//amplitude *= (1.0 + momentumNoise * noise);
+
+		// éviter amplitude négative si gros choc négatif
+		amplitude = Math.max(0.0, amplitude);
+
+		priceMomentum = direction * amplitude;
+
+		price *= Math.exp(priceSensitivity * priceMomentum);
+
+		macroData.addValue(MacroVariable.MAX_PRICE, productionIndex, price);
+		macroData.addValue(MacroVariable.MIN_PRICE, productionIndex, price);
+	}
+
+	public void preMarketActions() {
+		selectProduction();
+		production();
+		calculateConsumptionBudget();
+	}
+
+	public void print() {
+		for (int i = 0; i < needs.length; i++) {
+			if (needs[i] != 0) {
+				System.out.println("Need " + i + ": " + needs[i]);
+			}
+		}
+		for (int i = 0; i < productivity.length; i++) {
+			if (productivity[i] != 0) {
+				System.out.println("Productivity " + i + ": " + productivity[i]);
+			}
+		}
+	}
+
+	private void production() {
+		var productionVolume = productivity(productionIndex);
+		inventory[productionIndex] += productionVolume;
+		macroData.addValue(MacroVariable.PRODUCTION_VOLUME, productionIndex, productionVolume);
+		macroData.addValue(MacroVariable.PRODUCTION_VALUE, productionIndex, productionVolume * price);
+		macroData.addValue(MacroVariable.SECTOR_SIZE, productionIndex, 1);
+	}
+
+	public int productionIndex() {
+		return productionIndex;
+	}
+
+	public float productivity() {
+		return productivity[productionIndex];
+	}
+
+	public float productivity(int i) {
+		return productivity[i];
+	}
+
+	private void searchNewSuppliers() {
+
+		int missing = suppliersListNormalSize - suppliers.size();
+		if (missing <= 0)
+			return;
+
+		if (suppliersListNormalSize > world.getNumberOfAgents() - 1) {
+			throw new IllegalArgumentException("Supplier list size exceeds available population.");
+		}
+
+		int attempts = 0;
+		int maxAttempts = missing * 20; // marge large
+
+		while (suppliers.size() < suppliersListNormalSize) {
+
+			if (attempts++ > maxAttempts) {
+				throw new IllegalStateException("Too many duplicate draws while filling supplier list.");
+			}
+
+			Agent candidate = world.pickRandomAgent();
+
+			if (candidate != this && !suppliers.contains(candidate)) {
+				suppliers.addFirst(candidate);
+			}
+		}
+	}
+
+	private void selectProduction() {
+
+		if (productionIndex == null) {
+			while (true) {
+				productionIndex = world.random().nextInt(numberOfGoods);
+				if (productivity() > 0) {
+					price = 200 - world.random().nextFloat(200); // TODO should be a parameter
+					expectedIncome = price * productivity();
+					break;
+				}
+			}
+		} else {
+
+			if (inventorySurvivalRate < 1) {
+				// Eventuelle destruction d'une part des stocks antérieurs
+				var before = inventory[this.productionIndex];
+				inventory[this.productionIndex] = inventorySurvivalRate * inventory[this.productionIndex];
+				var product_destruction = before - inventory[this.productionIndex];
+				macroData.addValue(MacroVariable.PRODUCT_DESTRUCTION, productionIndex, product_destruction);
+				// TODO Vérifier la cohérence stock-flux après cette étape
+			}
+
+			if (world.random().nextDouble() < sectorReviewProbability) {
+				expectedIncome = price * productivity();
+				for (int iter = 0; iter < 10; iter++) { // TODO 20 should be a parameter
+					Agent randomAgent = world.pickRandomAgent();
+					Integer newProductionIndex = randomAgent.productionIndex;
+					if (newProductionIndex != productionIndex) {
+						var newPrice = randomAgent.price;
+						var newIncome = newPrice * productivity(newProductionIndex);
+						if (newIncome > expectedIncome) {
+							// Changement de production
+							macroData.addValue(MacroVariable.PRODUCT_DESTRUCTION, productionIndex,
+									inventory[productionIndex]);
+							inventory[this.productionIndex] = 0;
+							productionIndex = newProductionIndex;
+							expectedIncome = newIncome;
+							price = newPrice;
+							priceMomentum = 0;
+							break;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	public void setMacroData(MacroData macroData) {
+		this.macroData = macroData;
+	}
+
+	public void setWorld(World world) {
+		this.world = world;
+	}
+
+}

@@ -1,0 +1,1043 @@
+---
+title: "`r params$title`"
+output: html_document
+params:
+  title: "Analyse du modèle"
+  file_key: "260113212159modelB"
+---
+
+Dans ce fichier, la valeur est calculée du point de vue de la production. Il faudrait refaire l'analyse avec un calcul du point de vue de la consommation (valeurs réalisées). La difficulté, c'est qu'il faudrait comptabiliser la main d'ouvre utilisée pour la production des marchandises vendues. Or on n'a pas cette statistique. Mais elle n'est pas impossible à produire. Y penser;
+
+```{r setup, include=FALSE}
+
+Sys.setlocale("LC_ALL", "fr_FR.UTF-8")
+options(encoding = "UTF-8")
+
+knitr::opts_chunk$set(
+  echo    = FALSE,
+  message = FALSE,
+  warning = FALSE
+)
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(grid)
+library(knitr)
+library(kableExtra)
+
+# Fonction standard pour afficher les tableaux
+print_table <- function(df, caption = NULL, digits = 3) {
+  knitr::kable(
+    df,
+    format   = "html",
+    caption  = caption,
+    digits   = digits
+  ) %>%
+    kableExtra::kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed"),
+      full_width = FALSE,
+      position = "left"
+    )
+}
+
+# identifiant des fichiers de la simulation
+file_key <- params$file_key
+
+# récupération des données
+output_dir <- "output"
+data_file  <- file.path(output_dir, paste0(file_key, ".output.csv"))
+param_file <- file.path(output_dir, paste0(file_key, ".parameters.csv"))
+
+df        <- read.csv(data_file)
+params_df <- read.csv(param_file)
+
+# Limite burn-in des données
+tLim <- 100
+
+# Nombre de secteurs repésentatifs à afficher
+
+n_sample <- 9
+
+# Tirage aléatoire de secteurs représentatifs parmi l'ensemble des secteurs
+
+set.seed(NULL)
+sample_sectors <- sample(unique(df$sector), n_sample)
+
+```
+
+# Au sujet de ce rapport
+
+```{r}
+cat("Date et heure de génération du rapport :", format(Sys.time(), "%d/%m/%Y %H:%M:%S"), "\n")
+
+cat("Data source:", file_key, "\n")
+
+number_of_sectors <- max(df$sector) + 1
+
+# size <- params_df %>%
+#   filter(parameter == "size") %>%
+#   slice(1) %>%
+#   pull(value)
+# cat("Model size:", size, "\n")
+# 
+# cat("Sectors:", number_of_sectors, "\n")
+
+```
+# Paramètres généraux de la simulation
+
+```{r}
+#table_df <- params_df %>%
+#  filter(is.na(sector)) %>%
+#  select(-sector)
+
+print_table(
+  head(params_df, 10),
+  caption = "Paramètres généraux"
+)
+
+```
+
+
+```{r}
+
+# Préparation des données
+
+wide_df <- df %>%
+  pivot_wider(
+    names_from = dataType,
+    values_from = value
+  )
+
+```
+
+
+
+# Analyse
+
+## Extinction des secteurs
+
+Il est important de vérifier que la simulation ne conduit pas à la disparition d'un trop grand nombre de secteurs.\n
+
+On compte le nombre de secteurs qui ont un effectif nul à partir d'une date donnée.
+
+```{r}
+t0 <- 250
+
+cat("Date limite :", t0, "\n")
+
+sectors_zero_labor <- df %>%
+  filter(dataType == "sectorSize", t > t0) %>%
+  group_by(sector) %>%
+  summarise(active = any(value != 0), .groups = "drop") %>%
+  filter(!active) %>%
+  pull(sector)
+
+cat("Nombre de secteurs survivants :", number_of_sectors-length(sectors_zero_labor), "\n")
+cat("Nombre de secteurs disparus :", length(sectors_zero_labor), "\n")
+cat("Taux d'extinction :", length(sectors_zero_labor)/number_of_sectors, "\n")
+cat("Liste des secteurs disparus :", paste(sectors_zero_labor, collapse = ", "), "\n")
+
+```
+## Cohérence Stock-flux, en volume
+
+Les stocks, à la fin de la période, sont-ils bien égaux (en volume) aux stocks antérieurs + les flux positifs et négatifs de la période ? Ce ce que le graphique suivant permet de vérifier.
+
+```{r}
+
+# Calcul des nouveaux stocks, à partir des stocks antérieurs et des flux positifs et négatifs de matière
+unsold_df <- wide_df %>%
+  select(t, sector, unsoldVolume, productionVolume, consumptionVolume, productDestruction) %>%
+  group_by(sector) %>%
+  mutate(
+    unsold_reconstructed =
+      lag(unsoldVolume) +
+      productionVolume -
+      consumptionVolume -
+      productDestruction
+  ) %>%
+  ungroup()
+
+```
+
+```{r fig.height=8}
+
+# Préparation des données (format long avec type de série)
+plot_df <- bind_rows(
+  unsold_df %>%
+    filter(sector %in% sample_sectors) %>%
+    transmute(
+      t,
+      sector,
+      serie = "Stocks observés",
+      value = unsoldVolume
+    ),
+  unsold_df %>%
+    filter(sector %in% sample_sectors) %>%
+    transmute(
+      t,
+      sector,
+      serie = "Stocks calculés",
+      value = unsold_reconstructed
+    )
+)
+
+# Plot
+ggplot(plot_df, aes(t, value, color = serie, linetype = serie)) +
+  geom_line(linewidth = 0.7) +
+  facet_wrap(~ sector, scales = "free_y") +
+  scale_color_manual(
+    values = c(
+      "Stocks observés"     = "firebrick",
+      "Stocks calculés" = "steelblue"
+    )
+  ) +
+  scale_linetype_manual(
+    values = c(
+      "Stocks observés" = "dotted",
+      "Stocks calculés" = "solid"
+    )
+  ) +
+  labs(
+    title = "Stocks observés et stocks calculés (cohérence des stocks et des flux)",
+    x = "Temps",
+    y = "Volume de stocks",
+    color = NULL,
+    linetype = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+```
+
+
+## Autres
+
+### Dynamiques des secteurs (taille, valeur)
+
+```{r}
+
+
+labor_df <- df %>% filter(dataType == "sectorSize")
+
+relative_labor_df <- labor_df %>%
+  group_by(t) %>%
+  mutate(
+    totalLabor = sum(value, na.rm = TRUE),
+    laborShare = 100 * value / totalLabor
+  ) %>%
+  ungroup()
+
+relative_production_df <- df %>%
+  filter(dataType == "productionValue") %>%
+  group_by(t) %>%
+  mutate(
+    totalProductionValue = sum(value, na.rm = TRUE),
+    productionShare = 100 * value / totalProductionValue
+  ) %>%
+  ungroup()
+
+```
+
+```{r}
+
+ggplot(relative_labor_df, aes(t, laborShare, color = factor(sector))) +
+  geom_line(linewidth = 0.5) +
+  labs(
+    title = "Taille des secteurs (nombre de producteurs) en part du total",
+    x = "Temps",
+    y = "Taille (%)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none") + ylim(0,10)
+
+```
+
+```{r}
+
+relative_production_df %>%
+ggplot(aes(t, productionShare, color = factor(sector))) +
+  geom_line(linewidth = 0.5) +
+  labs(
+    title = "Part de la production en valeur",
+    x = "Temps",
+    y = "Production (%)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none") + ylim(0,10)
+
+```
+
+```{r}
+trajectory_df <- inner_join(
+  relative_production_df,
+  relative_labor_df,
+  by = c("t", "sector")
+)
+
+```
+
+```{r}
+
+# Filtrer sur ces secteurs et t>0
+
+trajectory_sample <- trajectory_df %>%
+  filter(sector %in% sample_sectors, t > tLim)
+
+# Tracé des trajectoires
+
+ggplot(trajectory_sample, aes(x = productionShare, y = laborShare, group = sector)) +
+  geom_path(linewidth = 0.4,color = "steelblue", alpha=0.2) +
+  geom_point(size = 0.5,color = "steelblue", alpha=0.5) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", linewidth = 0.8, color = "grey50") +
+  facet_wrap(~sector, scales = "fixed") + # même échelle pour toutes les facettes
+  coord_fixed(ratio = 1) + # ratio 1:1 entre axes x et y
+  labs(
+    title = paste("Trajectoires production / travail –", n_sample, "secteurs représentatifs"),
+    x = "Part de la production (%)",
+    y = "Part du temps de travail (%)",
+    color = "steelblue"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+### Dynamiques des prix et des valeurs
+
+```{r}
+prices_df <- df %>%
+  filter(dataType %in% c(
+    "productionValue",
+    "productionVolume",
+    "sectorSize"
+  )) %>%
+  pivot_wider(
+    names_from = dataType,
+    values_from = value
+  )
+
+prices_df <- prices_df %>%
+  group_by(t) %>%
+  mutate(
+    totalProductionValue = sum(productionValue, na.rm = TRUE),
+    totalSectorSize      = sum(sectorSize, na.rm = TRUE),
+    producedValue        = totalProductionValue * sectorSize / totalSectorSize,
+    unitPrice            = productionValue / productionVolume,
+    unitValue            = producedValue / productionVolume
+  ) %>%
+  ungroup()
+
+```
+
+```{r}
+prices_df %>%
+  ggplot(aes(t, color = factor(sector))) +
+  geom_line(aes(y = unitPrice), linewidth = 0.5) +
+  scale_y_log10() +
+  labs(
+    title = "Prix unitaires",
+    x = "Temps",
+    y = "Prix",
+    #color = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+```{r}
+prices_df %>%
+  ggplot(aes(t, color = factor(sector))) +
+  geom_line(aes(y = unitValue), linewidth = 0.5) +
+  scale_y_log10() +
+  labs(
+    title = "Valeurs unitaires",
+    x = "Temps",
+    y = "Valeur",
+    #color = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+
+```{r fig.height=8}
+
+# Filtrer prices_df pour ces secteurs
+
+wide_sample <- prices_df %>% filter(sector %in% sample_sectors)
+
+# Burn-in
+
+wide_sample <- wide_sample %>%
+  filter(t > tLim)
+
+# Tracé avec facettes
+
+ggplot(wide_sample, aes(x = t)) +
+  geom_line(aes(y = unitValue, color = "Valeur unitaire"), linewidth = 0.5) +
+  geom_line(aes(y = unitPrice, color = "Prix unitaire"), linewidth = 0.5) +
+  scale_y_log10() +
+  facet_wrap(~sector, scales = "fixed") +
+  labs(
+    title = paste("Prix et valeur unitaires –", n_sample, "secteurs représentatifs, t >", tLim),
+    x = "Temps",
+    y = "Grandeur unitaire",
+    color = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+```
+
+```{r fig.height=8}
+
+# Calcul du déséquilibre offre / demande par secteur et par période
+
+imbalance_df <- df %>%
+  filter(dataType %in% c("productionValue", "consumptionBudget","consumptionValue")) %>%
+  pivot_wider(
+    names_from  = dataType,
+    values_from = value
+  ) %>%
+  mutate(
+    imbalance = 100*(productionValue - consumptionBudget) / (productionValue + consumptionBudget)
+  )
+
+# Évolution temporelle du déséquilibre
+
+imbalance_df %>%
+ggplot(aes(x = t, y = imbalance, group = sector, color = factor(sector))) +
+  geom_line(linewidth = 0.6) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+  #coord_cartesian(ylim = c(-100, 800)) +
+  labs(
+    title = "Déséquilibre offre / demande par secteur",
+    x = "Temps",
+    y = "(Offre − Demande) / (Offre + demande) (%)",
+    color = "Secteur"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+```{r fig.height=8}
+
+# Filtrage pour les secteurs sélectionnés
+
+imbalance_sample_df <- imbalance_df %>%
+  filter(sector %in% sample_sectors, t>tLim)
+
+# Graphique à facettes
+
+ggplot(imbalance_sample_df, aes(x = t, y = imbalance)) +
+  geom_line(color = "steelblue", linewidth = 0.7) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+  facet_wrap(~ sector, ncol = 3, scales = "fixed") +
+  labs(
+    title = "Déséquilibre offre / demande – 9 secteurs tirés au hasard",
+    x = "Temps",
+    y = "(Offre − Demande) / Consommation"
+  ) +
+  theme_minimal()
+
+```
+
+```{r fig.height=8}
+
+prices_df <- prices_df %>%
+  mutate(
+    relativePriceGap = (unitPrice - unitValue) / unitValue
+  )
+
+# Filtrage pour les secteurs sélectionnés
+
+imbalance_sample2_df <- prices_df %>%
+  filter(sector %in% sample_sectors, t>tLim)
+
+# Graphique à facettes
+
+ggplot(imbalance_sample2_df, aes(x = t, y = relativePriceGap)) +
+  geom_line(color = "steelblue", linewidth = 0.7) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+  facet_wrap(~ sector, ncol = 3, scales = "fixed") +
+  labs(
+    title = "Ecart prix/valeur – 9 secteurs tirés au hasard",
+    x = "Temps",
+    y = "(Prix − Valeur) / Valeur"
+  ) +
+  theme_minimal()
+
+```
+
+
+
+```{r}
+imbalance_sample2_df %>%
+  mutate(
+    sectorShare = sectorSize / totalSectorSize
+  ) %>%
+  ggplot(aes(
+    x = sectorShare,
+    y = relativePriceGap,
+    color = factor(sector)
+  )) +
+  geom_point(alpha = 0.6, size = 1) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey60") +
+  labs(
+    title = "Ecart prix-valeur en fonction de la taille relative des secteurs",
+    x = "Part du secteur dans la taille totale (log)",
+    y = "(Prix - Valeur) / Valeur",
+    color = "Secteur"
+  ) +
+  #scale_y_log10() +  
+  scale_x_log10() +
+  theme_minimal() + theme(legend.position = "none") 
+
+
+```
+
+
+```{r fig.height=8}
+
+trajectory2_df <- inner_join(
+  imbalance_sample2_df,
+  imbalance_sample_df,
+  by = c("t", "sector", "productionValue")
+)
+
+# Filtrage des premières périodes (burn)
+
+trajectory2_df <- trajectory2_df %>%
+  filter(t > tLim)
+
+
+ggplot(trajectory2_df, aes(x = imbalance, y = relativePriceGap, group = sector)) +
+  geom_path(linewidth = 0.4,color = "steelblue", alpha=0.2) +
+  geom_point(size = 0.5,color = "steelblue", alpha=0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+  #geom_abline(slope = 1, intercept = 0, linetype = "dashed", linewidth = 0.8, color = "grey50") +
+  facet_wrap(~sector, scales = "fixed") + # même échelle pour toutes les facettes
+  # coord_fixed(ratio = 1) + # ratio 1:1 entre axes x et y
+  labs(
+    title = paste("Trajectoires des déséquilibres offre/demande et prix/valeur –", n_sample, "secteurs représentatifs, t >",tLim),
+    x = "Déséquilibre offre/demande (%)",
+    y = "Déséquilibre prix/valeur (%)",
+    color = "steelblue"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+
+```{r fig.height=8}
+# 1. Taux de variation de sectorSize
+delta_sector_df <- df %>%
+  filter(dataType == "sectorSize") %>%
+  arrange(sector, t) %>%
+  group_by(sector) %>%
+  mutate(
+    deltaSectorSize = (value - lag(value)) / lag(value)
+  ) %>%
+  ungroup() %>%
+  select(t, sector, deltaSectorSize)
+
+# 2. Jointure avec relativePriceGap
+scatter_df <- imbalance_sample2_df %>%
+  select(t, sector, relativePriceGap) %>%
+  inner_join(delta_sector_df, by = c("t", "sector")) %>%
+  filter(sector %in% sample_sectors)
+
+# Filtrage des premières périodes (burn-in)
+
+tLim <- 160
+
+scatter_df <- scatter_df %>%
+  filter(t > tLim)
+
+
+# 3. Scatter plots en facettes
+ggplot(
+  scatter_df,
+  aes(
+    x = relativePriceGap,
+    y = deltaSectorSize
+  )
+) +
+  geom_point(alpha = 0.5, size = 1,color ="steelblue") +
+  facet_wrap(~ sector, scales = "fixed") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey60") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey60") +
+  labs(
+    title = paste("Variation de la taille sectorielle et écart prix / valeur, t >",tLim),
+    x = "Écart relatif prix / valeur",
+    y = "Taux de variation de la taille du secteur"
+  ) +
+  theme_minimal()
+
+```
+
+
+
+```{r fig.height=8}
+
+prices_df <- prices_df %>%
+  arrange(sector, t) %>%
+  group_by(sector) %>%
+  mutate(
+    deltaGap = relativePriceGap - lag(relativePriceGap)
+  ) %>%
+  ungroup()
+
+# 2. Jointure avec relativePriceGap
+scatter_df <- prices_df %>%
+  select(t, sector, deltaGap) %>%
+  inner_join(imbalance_df, by = c("t", "sector")) %>%
+  filter(sector %in% sample_sectors)
+
+# Filtrage des premières périodes (burn-in)
+
+scatter_df <- scatter_df %>%
+  filter(t > tLim)
+
+
+# 3. Scatter plots en facettes
+ggplot(
+  scatter_df,
+  aes(
+    x = imbalance,
+    y = deltaGap
+  )
+) +
+  geom_point(alpha = 0.5, size = 1,color ="steelblue") +
+  facet_wrap(~ sector, scales = "fixed") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey60") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey60") +
+  labs(
+    title = paste("Déséquilibre offre / demande et variation de de l'écart prix / valeur, t >",tLim),
+    x = "Déséquilibre offre / demande",
+    y = "Variation de de l'écart relatif entre prix et valeur"
+  ) +
+  theme_minimal()
+
+```
+
+```{r fig.height=8}
+
+prices_df <- prices_df %>%
+  arrange(sector, t) %>%
+  group_by(sector) %>%
+  mutate(
+    deltaPrice = (unitPrice-lag(unitPrice))/lag(unitPrice)
+  ) %>%
+  ungroup()
+
+k <- 1
+prices_df <- prices_df %>%
+  arrange(sector, t) %>%
+  group_by(sector) %>%
+  mutate(
+    deltaPrice_lag = lag(deltaPrice, k)
+  ) %>%
+  ungroup()
+
+# 2. Jointure avec imbalance_df
+scatter_df <- prices_df %>%
+  select(t, sector, deltaPrice_lag) %>%
+  inner_join(imbalance_df, by = c("t", "sector")) %>%
+  filter(sector %in% sample_sectors)
+
+# Filtrage des premières périodes (burn-in)
+
+scatter_df <- scatter_df %>%
+  filter(t > tLim)
+
+# 3. Scatter plots en facettes
+ggplot(
+  scatter_df,
+  aes(
+    x = imbalance,
+    y = deltaPrice_lag
+  )
+) +
+  geom_point(alpha = 0.5, size = 1,color ="steelblue") +
+  facet_wrap(~ sector, scales = "fixed") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey60") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey60") +
+  labs(
+    title = paste("Déséquilibre offre / demande et variation de de l'écart prix / valeur, t >",tLim),
+    x = "Déséquilibre offre / demande",
+    y = "Variation du prix"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+
+# Etude des invendus
+
+unsold_df <- unsold_df %>%
+  mutate(
+    unsoldLevel = unsoldVolume / productionVolume
+  )
+
+unsold_df %>%
+ggplot(aes(x = t, y = unsoldLevel, group = sector, color = factor(sector))) +
+  geom_line(linewidth = 0.6) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+  labs(
+    title = "Niveau des invendus, par secteur",
+    x = "Temps",
+    y = "Niveau des stocks / Production",
+    color = "Secteur"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+```{r fig.height=8}
+
+# 2. Jointure avec imbalance_df
+scatter_df <- prices_df %>%
+  select(t, sector, deltaPrice_lag) %>%
+  inner_join(unsold_df, by = c("t", "sector")) %>%
+  filter(sector %in% sample_sectors)
+
+# Filtrage des premières périodes (burn-in)
+
+scatter_df <- scatter_df %>%
+  filter(t > tLim)
+
+# 3. Scatter plots en facettes
+ggplot(
+  scatter_df,
+  aes(
+    x = unsoldLevel,
+    y = deltaPrice_lag
+  )
+) +
+  geom_point(alpha = 0.5, size = 1,color ="steelblue") +
+  facet_wrap(~ sector, scales = "fixed") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey60") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey60") +
+  labs(
+    title = paste("Niveau des stocks et variation du prix, t >",tLim),
+    x = "Niveau des stocks / Volume de la production",
+    y = "Variation du prix"
+  ) +
+  theme_minimal()
+
+```
+
+```{r fig.height=8}
+
+vector_df <- scatter_df %>%
+  arrange(sector, t) %>%
+  group_by(sector) %>%
+  mutate(
+    dx = lead(unsoldLevel)    - unsoldLevel,
+    dy = lead(deltaPrice_lag) - deltaPrice_lag
+  ) %>%
+  ungroup() %>%
+  filter(!is.na(dx), !is.na(dy))
+
+scale_factor <- 0.3   # à ajuster
+
+vector_df <- vector_df %>%
+  mutate(
+    dx_s = dx * scale_factor,
+    dy_s = dy * scale_factor
+  )
+
+ggplot(vector_df, aes(x = unsoldLevel, y = deltaPrice_lag)) +
+  geom_segment(
+    aes(
+      xend = unsoldLevel + dx_s,
+      yend = deltaPrice_lag + dy_s
+    ),
+    arrow = arrow(length = unit(0.08, "cm")),
+    alpha = 0.6,
+    color = "steelblue"
+  ) +
+  facet_wrap(~ sector, scales = "fixed") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey60") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey60") +
+  labs(
+    title = paste("Champ de vecteurs prix / stocks, t >", tLim),
+    x = "Niveau des stocks",
+    y = "Variation du prix"
+  ) +
+  theme_minimal()
+
+```
+Le chunk suivant permet de dire quel est le sens de rotation des graphiques ci-dessus.
+
+```{r}
+scatter_df <- scatter_df %>%
+  group_by(sector) %>%
+  mutate(
+    x_c = unsoldLevel - mean(unsoldLevel, na.rm = TRUE),
+    y_c = deltaPrice_lag - mean(deltaPrice_lag, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+rotation_df <- scatter_df %>%
+  arrange(sector, t) %>%
+  group_by(sector) %>%
+  mutate(
+    dx = x_c - lag(x_c),
+    dy = y_c - lag(y_c),
+    cross = x_c * dy - y_c * dx
+  ) %>%
+  summarise(
+    mean_rotation = mean(cross, na.rm = TRUE)
+  )
+
+rotation_df
+
+```
+
+Interprétation :\n
+- mean_rotation > 0 → rotation antihoraire\n
+- mean_rotation < 0 → rotation horaire\n
+
+```{r}
+# Encore étude de la variation des prix, mais cette fois-ci en fonction de l'état des stocks au niveau individuel
+
+unsoldCount_df <- df %>%
+  filter(dataType %in% c("sectorSize", "unsoldVolumePositif")) %>%
+  pivot_wider(
+    names_from  = dataType,
+    values_from = value
+  ) %>%
+  mutate(
+    unsoldVolumePositifRatio = unsoldVolumePositif / sectorSize
+  )
+
+```
+
+
+```{r fig.height=8}
+# Préparer les données jointes
+plot_df <- unsoldCount_df %>%
+  filter(sector == 1) %>%
+  left_join(
+    prices_df %>% select(t, sector, unitPrice),
+    by = c("t", "sector")
+  )
+
+# Bornes pour le rescaling
+y_left_min  <- min(100 * plot_df$unsoldVolumePositifRatio, na.rm = TRUE)
+y_left_max  <- max(100 * plot_df$unsoldVolumePositifRatio, na.rm = TRUE)
+
+log_price   <- log10(plot_df$unitPrice)
+log_min     <- min(log_price, na.rm = TRUE)
+log_max     <- max(log_price, na.rm = TRUE)
+
+# Fonction de rescaling
+rescale_price <- function(p) {
+  y_left_min + (log10(p) - log_min) / (log_max - log_min) * (y_left_max - y_left_min)
+}
+
+inv_rescale_price <- function(y) {
+  10^(
+    log_min + (y - y_left_min) / (y_left_max - y_left_min) * (log_max - log_min)
+  )
+}
+
+```
+
+```{r fig.height=8}
+
+# Données pour les 9 secteurs
+plot_df <- unsoldCount_df %>%
+  filter(sector %in% sample_sectors) %>%
+  left_join(
+    prices_df %>% select(t, sector, unitPrice),
+    by = c("t", "sector")
+  )
+
+# Bornes globales (communes à toutes les facettes)
+y_left_min <- min(100 * plot_df$unsoldVolumePositifRatio, na.rm = TRUE)
+y_left_max <- max(100 * plot_df$unsoldVolumePositifRatio, na.rm = TRUE)
+
+log_price <- log10(plot_df$unitPrice)
+log_min   <- min(log_price, na.rm = TRUE)
+log_max   <- max(log_price, na.rm = TRUE)
+
+# Fonctions de rescaling
+rescale_price <- function(p) {
+  y_left_min +
+    (log10(p) - log_min) / (log_max - log_min) *
+    (y_left_max - y_left_min)
+}
+
+inv_rescale_price <- function(y) {
+  10^(
+    log_min +
+      (y - y_left_min) / (y_left_max - y_left_min) *
+      (log_max - log_min)
+  )
+}
+
+# Plot en facettes
+ggplot(plot_df, aes(t)) +
+  geom_line(
+    aes(y = 100 * unsoldVolumePositifRatio),
+    linewidth = 0.6,
+    color = "steelblue"
+  ) +
+  geom_line(
+    aes(y = rescale_price(unitPrice)),
+    linewidth = 0.6,
+    color = "firebrick"
+  ) +
+  facet_wrap(~ sector, scales = "fixed") +
+  scale_y_continuous(
+    name = "Agents en difficulté (%)",
+    sec.axis = sec_axis(
+      trans = ~ inv_rescale_price(.),
+      name = "Prix unitaire (log)"
+    )
+  ) +
+  labs(
+    title = "Stocks non écoulés et prix unitaires",
+    x = "Temps"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+```
+
+
+```{r}
+
+scatter_df <- prices_df %>%
+  select(t, sector, deltaPrice_lag) %>%
+  inner_join(unsoldCount_df, by = c("t", "sector")) %>%
+  filter(sector %in% sample_sectors)
+
+```
+
+
+```{r fig.height=8}
+
+vector_df <- scatter_df %>%
+  arrange(sector, t) %>%
+  group_by(sector) %>%
+  mutate(
+    dx = lead(unsoldVolumePositifRatio)    - unsoldVolumePositifRatio,
+    dy = lead(deltaPrice_lag) - deltaPrice_lag
+  ) %>%
+  ungroup() %>%
+  filter(!is.na(dx), !is.na(dy))
+
+scale_factor <- 0.3   # à ajuster
+
+vector_df <- vector_df %>%
+  mutate(
+    dx_s = dx * scale_factor,
+    dy_s = dy * scale_factor
+  )
+
+ggplot(vector_df, aes(x = unsoldVolumePositifRatio, y = deltaPrice_lag)) +
+  geom_segment(
+    aes(
+      xend = unsoldVolumePositifRatio + dx_s,
+      yend = deltaPrice_lag + dy_s
+    ),
+    arrow = arrow(length = unit(0.08, "cm")),
+    alpha = 0.6,
+    color = "steelblue"
+  ) +
+  facet_wrap(~ sector, scales = "fixed") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey60") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey60") +
+  labs(
+    title = paste("Champ de vecteurs prix / stocks, t >", tLim),
+    x = "Part des agents ne parvenant pas à écouler leur production",
+    y = "Variation du prix"
+  ) +
+  theme_minimal()
+
+```
+
+
+## Prix constant
+
+```{r}
+
+# Calcul des valeurs et des prix constants
+
+prices_df <- prices_df %>%
+  group_by(t) %>%
+  mutate(pib_t = sum(producedValue)) %>%
+  ungroup() %>%
+  mutate(unitPrice_deflated = unitPrice / pib_t * pib_t[ t == tLim ][1]) %>%
+  mutate(unitValue_deflated = unitValue / pib_t * pib_t[ t == tLim ][1])
+
+```
+
+```{r}
+prices_df %>%
+  #filter(sector %in% sample_sectors) %>%
+  ggplot(aes(t, color = factor(sector))) +
+  geom_line(aes(y = unitPrice_deflated), linewidth = 0.5) +
+  scale_y_log10() +
+  labs(
+    title = paste("Prix contants –", n_sample, "secteurs représentatifs"),
+    x = "Temps",
+    y = "Prix (log)",
+    #color = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+## Prix et division du travail
+
+Le graphique suivant montre l'existence d'une étroite interdépendance entre la division du travail (taille du secteur, en nombre d'agents) et prix des marchandises (ici, prix constants).
+
+Après ce graphe, il faudrait vérifier la correspondance de la taille moyenne des secteurs et celle de l'équilbre, pareil pour les prix.
+
+```{r}
+ prices_df%>%
+  filter(t>100) %>%
+  #filter(sector %in% sample_sectors) %>%
+  ggplot(aes(x = unitPrice_deflated,
+                      y = sectorSize,
+                      color = factor(sector))) +
+  geom_point(alpha = 0.5, size = 0.5) +
+  #geom_path(alpha = 0.2, size = 0.5) +
+  scale_y_log10() +  scale_x_log10() +
+  #coord_cartesian(ylim = c(95, NA),xlim = c(100000, NA)) +
+  labs(
+    x = "Prix unitaire déflaté",
+    y = "Taille du secteur",
+    color = "Secteur"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+ prices_df%>%
+  filter(t>100) %>%
+  filter(sector %in% sample_sectors) %>%
+  ggplot(aes(x = unitValue_deflated,
+                      y = sectorSize,
+                      color = factor(sector))) +
+  geom_point(alpha = 0.5, size = 0.5) +
+  geom_path(alpha = 0.2, size = 0.5) +
+  scale_y_log10() +  scale_x_log10() +
+  coord_cartesian(ylim = c(95, NA),xlim = c(100000, NA)) +
+  labs(
+    x = "Valeur unitaire déflatée",
+    y = "Taille du secteur",
+    color = "Secteur"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```

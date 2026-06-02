@@ -1,0 +1,348 @@
+---
+title: "`r params$title`"
+output: html_document
+params:
+  title: "Analyse du modèle A"
+  file_key: "260238104814modelA"
+  project_dir: NULL
+---
+
+Analyse des sorties du modèle A
+
+```{r setup, include=FALSE}
+
+Sys.setlocale("LC_ALL", "fr_FR.UTF-8")
+options(encoding = "UTF-8")
+
+knitr::opts_chunk$set(
+  echo    = FALSE,
+  message = FALSE,
+  warning = FALSE
+)
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(grid)
+library(knitr)
+library(kableExtra)
+
+# Fonction standard pour afficher les tableaux
+print_table <- function(df, caption = NULL, digits = 3) {
+  knitr::kable(
+    df,
+    format   = "html",
+    caption  = caption,
+    digits   = digits
+  ) %>%
+    kableExtra::kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed"),
+      full_width = FALSE,
+      position = "left"
+    )
+}
+
+# identifiant des fichiers de la simulation
+file_key <- params$file_key
+
+# récupération des données
+output_dir <- "output"
+data_file  <- file.path(output_dir, paste0(file_key, ".output.csv"))
+param_file <- file.path(output_dir, paste0(file_key, ".parameters.csv"))
+
+data_file
+
+df        <- read.csv(data_file)
+params_df <- read.csv(param_file)
+
+# Limite burn-in des données
+tLim <- 100
+
+# Nombre de secteurs repésentatifs à afficher
+
+n_sample <- 9
+
+# Tirage aléatoire de secteurs représentatifs parmi l'ensemble des secteurs
+
+set.seed(NULL)
+sample_sectors <- sample(unique(df$sector), n_sample)
+
+```
+
+```{r}
+
+export_plot <- function(p, name, dir = "figures",
+                        width = 7, height = 5, dpi = 300) {
+
+  # créer le dossier si besoin
+  if (!dir.exists(dir)) dir.create(dir, recursive = TRUE)
+
+  # chemins
+  pdf_path <- file.path(dir, paste0(name, ".pdf"))
+  png_path <- file.path(dir, paste0(name, ".png"))
+
+  # export PDF vectoriel
+  pdf(pdf_path, width = width, height = height, family = "Helvetica")
+  print(p)
+  dev.off()
+
+  # export PNG haute résolution
+  # ggsave(
+  #   filename = png_path,
+  #   plot = p,
+  #   width = width,
+  #   height = height,
+  #   dpi = dpi
+  # )
+
+  # message("Exported: ", pdf_path, " and ", png_path)
+  message("Exported: ", pdf_path)
+}
+```
+
+
+# Au sujet de ce rapport
+
+```{r}
+cat("Date et heure de génération du rapport :", format(Sys.time(), "%d/%m/%Y %H:%M:%S"), "\n")
+
+cat("Data source:", file_key, "\n")
+
+number_of_sectors <- max(df$sector) + 1
+
+# size <- params_df %>%
+#   filter(parameter == "size") %>%
+#   slice(1) %>%
+#   pull(value)
+# cat("Model size:", size, "\n")
+# 
+# cat("Sectors:", number_of_sectors, "\n")
+
+```
+# Paramètres généraux de la simulation
+
+```{r}
+
+print_table(
+  head(params_df, 20),
+  caption = "Paramètres"
+)
+
+```
+
+```{r}
+
+# Préparation des données
+
+wide_df <- df  %>% 
+  filter(!is.na(value)) %>%
+  pivot_wider(
+    names_from = dataType,
+    values_from = value
+  )
+
+```
+
+```{r}
+
+print_table(
+  head(wide_df  %>% filter(sector %in% sample_sectors), 20),
+  caption = "Data"
+)
+
+```
+
+```{r}
+p <- wide_df  %>% 
+  #filter(sector %in% sample_sectors) %>%
+  ggplot(aes(t, color = factor(sector))) +
+  geom_line(aes(y = price), linewidth = 0.5) +
+  scale_y_log10() +
+  labs(
+    #title = "Prix",
+    x = "Itérations",
+    y = "Prix unitaires sectoriels",
+    #color = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+export_plot(p, "vA_tatonnement_prices")
+
+print(p)
+
+```
+
+```{r}
+p <- wide_df  %>% 
+ # filter(sector %in% sample_sectors) %>%
+  ggplot(aes(t, color = factor(sector))) +
+  geom_line(aes(y = speed), linewidth = 0.5) +
+  labs(
+    #title = "Facteurs d'ajustement des prix",
+    x = "Itérations",
+    y = "Facteurs d'ajustement des prix",
+    #color = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+export_plot(p, "vA_tatonnement_speed")
+
+print(p)
+
+```
+
+
+
+```{r}
+p <- wide_df  %>% 
+  #filter(sector %in% sample_sectors) %>%
+  ggplot(aes(t, color = factor(sector))) +
+  geom_line(aes(y = sectorSize), linewidth = 0.5) +
+  scale_y_log10() +
+  labs(
+    #title = "Taille des secteurs",
+    x = "Itérations",
+    y = "Effectifs sectoriels",
+    #color = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+export_plot(p, "vA_tatonnement_sectors")
+
+print(p)
+
+```
+
+```{r}
+wide_df  %>% filter(sector %in% sample_sectors) %>%
+  ggplot(aes(t, color = factor(sector))) +
+  geom_line(aes(y = productionVolume/sectorSize), linewidth = 0.5) +
+  #scale_y_log10() +
+  labs(
+    title = "Productivités sectorielles",
+    x = "Temps",
+    y = "productionVolume / sectorSize",
+    #color = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+```{r}
+p <- wide_df  %>% #filter(sector %in% sample_sectors) %>%
+  ggplot(aes(t, color = factor(sector))) +
+  geom_line(aes(y = 100*abs(consumptionBudget-productionValue)/(consumptionBudget+productionValue)), linewidth = 0.5) +
+ # scale_y_log10() +
+  labs(
+    #title = "Déséquilibres sectoriels",
+    x = "Itérations",
+    y = "Déséquilibres sectoriels (%)",
+    #color = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+export_plot(p, "vA_tatonnement_desequilibria")
+
+print(p)
+
+```
+```{r}
+result <- wide_df %>%
+  filter(t == 50) %>%
+  mutate(
+    y = 100 * abs(consumptionBudget - productionValue) /
+        (consumptionBudget + productionValue)
+  ) %>%
+  summarise(max_imbalance = max(y, na.rm = TRUE))
+
+result
+```
+
+```{r}
+index_df <- wide_df %>%
+  mutate(imbalance = abs(consumptionBudget - productionValue)) %>%
+  group_by(t) %>%
+  summarise(
+    index = 100*sum(imbalance) / sum(consumptionBudget + productionValue)
+  )
+
+p <- ggplot(index_df, aes(x = t, y = index, color="red")) +
+  #scale_y_log10() +
+  geom_line() +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(
+    x = "Itérations",
+    y = "Indice de déséquilibre global (%)"
+  )
+
+export_plot(p, "vA_tatonnement_global_desequilibrium")
+
+print(p)
+
+
+```
+```{r}
+result <- index_df %>%
+  filter(t == 50)
+
+result
+```
+
+
+```{r}
+
+wide_df %>%
+  group_by(sector) %>%
+  filter(t == max(t)) %>%
+  ungroup() %>%
+  ggplot(aes(x = price, y = sectorSize, color = factor(sector))) +
+  geom_point(size = 2) +
+  scale_y_log10() +
+  scale_x_log10() +
+  theme_minimal() +
+  coord_cartesian(ylim = c(150, 1000),xlim = c(30, 400)) +
+  theme(legend.position = "none")
+
+```
+
+```{r}
+prices_df <- wide_df %>%
+  group_by(t) %>%
+  mutate(
+    totalProductionValue = sum(productionValue, na.rm = TRUE),
+    totalSectorSize      = sum(sectorSize, na.rm = TRUE),
+    producedValue        = totalProductionValue * sectorSize / totalSectorSize,
+    unitValue            = producedValue / productionVolume,
+    gap                  = (price-unitValue)/unitValue
+  ) %>%
+  ungroup()
+```
+
+
+```{r}
+
+prices_df %>%
+  group_by(sector) %>%
+  filter(t == max(t)) %>%
+  ungroup() %>%
+  ggplot(aes(x = productionValue, y = gap, color = factor(sector))) +
+  geom_point(size = 2) +
+  #scale_x_log10() +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+prices_df %>%
+  group_by(sector) %>%
+  filter(t == max(t)) %>%
+  ungroup() %>%
+  ggplot(aes(x = sectorSize, y = 100*(1+gap), color = factor(sector))) +
+  geom_point(size = 2) +
+  ylim(0,NaN)+
+  #scale_x_log10() +
+  theme_minimal() +
+  theme(legend.position = "none")
+```

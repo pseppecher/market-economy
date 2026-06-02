@@ -1,0 +1,423 @@
+---
+title: "`r params$title`"
+output: html_document
+params:
+  title: "Analyse des modèles A et B"
+  file_key: NULL
+  project_dir: NULL
+---
+
+Analyse des sorties des modèles A et B
+
+```{r setup, include=FALSE}
+
+Sys.setlocale("LC_ALL", "fr_FR.UTF-8")
+options(encoding = "UTF-8")
+
+knitr::opts_chunk$set(
+  echo    = FALSE,
+  message = FALSE,
+  warning = FALSE
+)
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(grid)
+library(knitr)
+library(kableExtra)
+
+# Fonction standard pour afficher les tableaux
+print_table <- function(df, caption = NULL, digits = 3) {
+  knitr::kable(
+    df,
+    format   = "html",
+    caption  = caption,
+    digits   = digits
+  ) %>%
+    kableExtra::kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed"),
+      full_width = FALSE,
+      position = "left"
+    )
+}
+
+# identifiant des fichiers de la simulation
+file_key <- params$file_key
+
+# répertoire de sortie de la simulation
+output_dir <- file.path(params$project_dir, "output")
+
+# chemins des fichiers
+dataA_file <- file.path(output_dir, paste0(file_key, "A.output.csv"))
+dataB_file <- file.path(output_dir, paste0(file_key, "B.output.csv"))
+param_file <- file.path(output_dir, paste0(file_key, "A.parameters.csv"))
+
+# lecture des données
+dfA       <- read.csv(normalizePath(dataA_file))
+dfB       <- read.csv(normalizePath(dataB_file))
+params_df <- read.csv(normalizePath(param_file))
+
+# Limite burn-in des données
+tLim <- 200
+
+# Nombre de secteurs repésentatifs à afficher
+
+n_sample <- 9
+
+# Tirage aléatoire de secteurs représentatifs parmi l'ensemble des secteurs
+
+set.seed(NULL)
+sample_sectors <- sample(unique(dfA$sector), n_sample)
+
+```
+
+
+```{r}
+
+export_plot <- function(p, name, dir = "figures",
+                        width = 7, height = 5, dpi = 300) {
+
+  # créer le dossier si besoin
+  if (!dir.exists(dir)) dir.create(dir, recursive = TRUE)
+
+  # chemins
+  pdf_path <- file.path(dir, paste0(name, ".pdf"))
+  png_path <- file.path(dir, paste0(name, ".png"))
+
+  # export PDF vectoriel
+  pdf(pdf_path, width = width, height = height, family = "Helvetica")
+  print(p)
+  dev.off()
+
+  # export PNG haute résolution
+  # ggsave(
+  #   filename = png_path,
+  #   plot = p,
+  #   width = width,
+  #   height = height,
+  #   dpi = dpi
+  # )
+
+  message("Exported: ", pdf_path, " and ", png_path)
+}
+```
+
+
+
+# Au sujet de ce rapport
+
+```{r}
+cat("Date et heure de génération du rapport :", format(Sys.time(), "%d/%m/%Y %H:%M:%S"), "\n")
+
+cat("Data source:", file_key, "\n")
+
+number_of_sectors <- max(dfA$sector) + 1
+
+```
+# Paramètres généraux de la simulation
+
+
+```{r}
+
+# Préparation des données
+
+wide_dfA <- dfA  %>% 
+  filter(!is.na(value)) %>%
+  pivot_wider(
+    names_from = dataType,
+    values_from = value
+  )
+
+```
+
+
+
+```{r}
+prices_dfA <- wide_dfA %>%
+  group_by(t) %>%
+  mutate(
+    totalProductionValue = sum(productionValue, na.rm = TRUE),
+    totalSectorSize      = sum(sectorSize, na.rm = TRUE),
+    producedValue        = totalProductionValue * sectorSize / totalSectorSize,
+    unitValue            = producedValue / productionVolume,
+    gap                  = (price-unitValue)/unitValue
+  ) %>%
+  ungroup()
+```
+
+```{r}
+prices_dfB <- dfB %>%
+  filter(dataType %in% c(
+    "productionValue",
+    "productionVolume",
+    "consumptionVolume",
+    "consumptionValue",
+    "sectorSize",
+    "laborUsed"
+  )) %>%
+  pivot_wider(
+    names_from = dataType,
+    values_from = value
+  )
+
+prices_dfB <- prices_dfB %>%
+  group_by(t) %>%
+  mutate(
+    totalProductionValue = sum(productionValue, na.rm = TRUE),
+    totalConsumptionValue = sum(consumptionValue, na.rm = TRUE),
+    totalSectorSize      = sum(sectorSize, na.rm = TRUE),
+    unitPrice2            = consumptionValue / consumptionVolume,
+    unitPrice           = productionValue / productionVolume,
+    producedValue        = totalProductionValue * sectorSize / totalSectorSize,
+    unitValue            = producedValue / productionVolume,
+    totalLaborUsed       = sum(laborUsed, na.rm = TRUE),
+    laborEquivalent      = totalConsumptionValue * laborUsed / totalLaborUsed,
+    unitLaborEquivalent  = laborEquivalent / consumptionVolume
+  ) %>%
+  ungroup()
+
+prices_dfB <- prices_dfB %>%
+  mutate(
+    relativePriceGap = (unitPrice - unitValue) / unitValue,
+    relativePriceGap2 = (unitPrice2 - unitLaborEquivalent) / unitLaborEquivalent
+  )
+
+
+
+```
+
+
+
+```{r}
+
+resultB <- prices_dfB %>%
+  #filter(t > tLim) %>%
+  group_by(sector) %>%
+  summarise(
+    mean_sectorSize = mean(sectorSize, na.rm = TRUE),
+    mean_relativePriceGap   = mean(relativePriceGap,   na.rm = TRUE),
+    mean_relativePriceGap2   = mean(relativePriceGap2,   na.rm = TRUE)
+  )
+
+```
+
+
+```{r}
+A <- prices_dfA %>%
+  group_by(sector) %>%
+  filter(t == max(t)) %>%
+  ungroup() %>%
+  transmute(
+    sector = factor(sector),
+    x = sectorSize,
+    y = (1+gap)*100,
+    facet = "vA (équilibre général)"
+  )
+
+B <- resultB %>%
+  transmute(
+    sector = factor(sector),
+    x = mean_sectorSize,
+    y = (1+mean_relativePriceGap)*100,
+    facet = "vb (dynamiques décentralisés))"
+  )
+
+ meanA <- mean(A$x)
+ meanB <- mean(B$x)
+ medianA <- median(A$x)
+ medianB <- median(B$x)
+
+combined <- bind_rows(A, B)
+
+p <- ggplot(combined, aes(x = x, y = y, color = sector)) +
+  geom_point(size = 2, alpha = 1) +
+  facet_wrap(~ facet) +
+  labs(
+    x = "Taille du secteur (nombre d'agents)",
+    y = "Rapport Prix / Valeur (%)"
+  ) +
+  geom_hline(yintercept=100, linetype = "dotted") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p <- p +
+  geom_vline(
+    data = subset(combined, facet == "A"),
+    xintercept = medianA,
+    linetype = "dotted"
+  ) +
+  geom_vline(
+    data = subset(combined, facet == "B"),
+    xintercept = medianB,
+    linetype = "dotted"
+  )
+
+c
+print(p)
+
+
+```
+
+```{r}
+
+# Calcul des valeurs et des prix normalisés
+
+
+prices_dfB <- prices_dfB %>%
+  mutate(producedValue = ifelse(is.na(producedValue), 0, producedValue)) %>%
+  group_by(t) %>%
+  mutate(pib_t = sum(producedValue)) %>%
+  ungroup()
+
+prices_dfB <- prices_dfB %>%
+  group_by(t) %>%
+  mutate(pib_t = sum(producedValue)) %>%
+  ungroup()
+
+wide_dfA <- wide_dfA %>%
+  group_by(t) %>%
+  mutate(pib_t = sum(productionValue)) %>%
+  ungroup()
+
+wide_dfA <- wide_dfA %>%
+  group_by(t) %>%
+  mutate(pib_t = sum(productionValue)) %>%
+  ungroup()
+
+pib_ref <- wide_dfA$pib_t[ wide_dfA$t == max(wide_dfA$t) ][1]
+
+prices_dfB <- prices_dfB %>%
+  mutate(
+    unitPrice_deflated = unitPrice / pib_t * pib_ref,
+    unitValue_deflated = unitValue / pib_t * pib_ref
+  )
+
+```
+
+
+```{r}
+AA <- wide_dfA %>%
+  group_by(sector) %>%
+  filter(t == max(t)) %>%
+  ungroup() %>%
+  transmute(
+    sector = factor(sector),
+    x = price,
+    y = sectorSize,
+    facet = "vA (équilibre général)"
+  )
+
+BB <- prices_dfB %>%
+  filter(t>tLim) %>% 
+  transmute(
+    sector = factor(sector),
+    x = unitPrice_deflated,
+    y = sectorSize,
+    facet = "vB (dynamiques décentralisées)"
+  )
+
+combined <- bind_rows(AA, BB)
+
+```
+
+```{r}
+facet_params <- tibble::tribble(
+  ~facet, ~size, ~alpha,
+  "vA (équilibre général)",     2,    1,
+  "vB (dynamiques décentralisées)",     1,    0.2
+)
+
+p <- ggplot()
+
+for (i in seq_len(nrow(facet_params))) {
+  f  <- facet_params$facet[i]
+  sz <- facet_params$size[i]
+  al <- facet_params$alpha[i]
+
+  p <- p +
+    geom_point(
+      data = combined %>% dplyr::filter(facet == f),
+      aes(x = x, y = y, color = sector),
+      size = sz,
+      alpha = al
+    )
+}
+
+p <- p +
+  facet_wrap(~ facet) +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(x = "Prix", y = "Taille") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+export_plot(p, "priceSizeAB")
+
+print(p)
+
+```
+
+```{r}
+size_plot_df <- prices_dfB %>%
+  filter(t>tLim) %>% 
+  #filter(sector==0) %>% 
+  inner_join(
+    wide_dfA %>% 
+    filter(t == max(t)) %>%
+    select(sector, sectorSizeA = sectorSize),
+    by = "sector"
+  ) %>%
+  rename(sectorSizeB = sectorSize) %>%
+  select(sector, sectorSizeA, sectorSizeB)
+```
+
+```{r}
+p <- ggplot(size_plot_df, aes(x = sectorSizeA, y = sectorSizeB, color = factor(sector))) +
+  geom_point(alpha = 0.1, size = 1.5) +
+  labs(
+    #title = paste("Taille des secteurs"),
+    x = "vA (équilibre général)",
+    y = "vB (dynamique décentralisée)"
+  ) + theme_minimal() +
+  scale_y_log10() +  scale_x_log10() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  theme(legend.position = "none")
+
+export_plot(p, "sizeAB")
+
+print(p)
+
+```
+```{r}
+price_plot_df <- prices_dfB %>%
+  filter(t>tLim) %>% 
+  #filter(sector==0) %>% 
+  inner_join(
+    wide_dfA %>% 
+    filter(t == max(t)) %>%
+    select(sector, priceA = price),
+    by = "sector"
+  ) %>%
+  rename(priceB = unitPrice_deflated) %>%
+  select(sector, priceA, priceB)
+```
+
+```{r}
+
+p <- ggplot(price_plot_df, aes(x = priceA, y = priceB, color = factor(sector))) +
+  geom_point(alpha = 0.1, size = 1.5) +
+  labs(
+    #title = paste("Prix unitaires selon les secteurs"),
+    x = "vA (équilibre général)",
+    y = "vB (dynamiques décentralisées)"
+  ) + theme_minimal() +
+  scale_y_log10() +  scale_x_log10() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  theme(legend.position = "none")
+
+export_plot(p, "priceAB")
+
+print(p)
+
+```
