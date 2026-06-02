@@ -102,25 +102,21 @@ public class Agent {
 		return expenses;
 	}
 
+	/**
+	 * 
+	 */
 	public void marketActions() {
 
 		searchNewSuppliers();
-		market();
-
-	}
-
-	private void market() {
-
-		if (suppliers.size() != suppliersListNormalSize) {
-			System.err.println(suppliers.size() + ", " + suppliersListNormalSize);
-			throw new IllegalStateException("Supplier list size is not equal to L.");
-		}
 
 		var activeSuppliers = performMarketTransactions();
 
 		reorderSuppliers(activeSuppliers);
 	}
 
+	/**
+	 * @return
+	 */
 	private Set<Agent> performMarketTransactions() {
 
 		var activeSuppliers = new LinkedHashSet<Agent>();
@@ -177,8 +173,8 @@ public class Agent {
 				}
 			}
 		}
-		
-		// TODO Ça ne va pas du tout ! Il faut aussi tester qu'il a du stock à vendre ! 
+
+		// TODO Ça ne va pas du tout ! Il faut aussi tester qu'il a du stock à vendre !
 
 		return bestSuppliers;
 	}
@@ -213,33 +209,37 @@ public class Agent {
 		}
 	}
 
+	/**
+	 * @param activeSuppliers
+	 */
 	private void reorderSuppliers(Set<Agent> activeSuppliers) {
 
 		// TODO A renommer : updateSuppliersList()
-		
+
 		// TODO Nouvelle méthode à TESTER
-		
+
 		var reordered = new LinkedList<>(activeSuppliers);
 		reordered.addAll(suppliers);
-		
+
 		if (suppliers.size() != suppliersListNormalSize) {
 			System.err.println(suppliers.size() + ", " + suppliersListNormalSize);
 			throw new IllegalStateException("Supplier list size is not equal to L.");
-		} // TODO on pourrait peut-être supprimer ce test
-		
-		// TODO C'est ici qu'il faudrait renouveler partiellement la liste en supprimant les derniers items et en les remplaçant par de nouveaux, tirés au hasard dans la masse, voir la méthode removeLowestRankedSuppliers()
+		} // TODO on pourrait peut-être supprimer ce test ?
+
+		// Il faut maintenant renouveler partiellement la liste en supprimant
+		// les derniers items et en les remplaçant par de nouveaux, tirés au hasard dans
+		// la masse.
+	
+		// remove Lowest Ranked Suppliers
+		var size = suppliers.size();
+		if (size >= suppliersListNormalSize) {
+		    var fromIndex = size - numSuppliersToReject;
+		    suppliers.subList(fromIndex, size).clear();
+		}
 	}
 
 	public void postMarketActions() {
 		updateProductionPrice();
-		removeLowestRankedSuppliers();
-	}
-
-	private void removeLowestRankedSuppliers() {
-		final int suppliersListSize = suppliers.size();
-		if (suppliersListSize >= suppliersListNormalSize) {
-			suppliers.subList(suppliersListSize - numSuppliersToReject, suppliers.size()).clear();
-		}
 	}
 
 	private void updateProductionPrice() {
@@ -256,8 +256,6 @@ public class Agent {
 			macroData.addValue(MacroVariable.UNSOLD_VOLUME, productionIndex, 0);
 		}
 
-		//double noise = world.random().nextGaussian(); // ε ~ N(0,1)
-
 		double amplitude = Math.abs(priceMomentum);
 
 		boolean reversal = (priceMomentum != 0.0) && (Math.signum(priceMomentum) != direction);
@@ -270,9 +268,6 @@ public class Agent {
 			amplitude += momentumGain; // α
 		}
 
-		// bruit proportionnel à l'échelle actuelle
-		//amplitude *= (1.0 + momentumNoise * noise);
-
 		// éviter amplitude négative si gros choc négatif
 		amplitude = Math.max(0.0, amplitude);
 
@@ -284,7 +279,13 @@ public class Agent {
 		macroData.addValue(MacroVariable.MIN_PRICE, productionIndex, price);
 	}
 
+	/**
+	 * 
+	 */
 	public void preMarketActions() {
+
+		// TODO Tout ceci ne concerne que la production. Renommer cette méthode ?
+
 		selectProduction();
 		production();
 		calculateConsumptionBudget();
@@ -323,6 +324,9 @@ public class Agent {
 		return productivity[i];
 	}
 
+	/**
+	 * 
+	 */
 	private void searchNewSuppliers() {
 
 		int missing = suppliersListNormalSize - suppliers.size();
@@ -342,14 +346,23 @@ public class Agent {
 				throw new IllegalStateException("Too many duplicate draws while filling supplier list.");
 			}
 
-			Agent candidate = world.pickRandomAgent();
+			var candidate = world.pickRandomAgent();
 
 			if (candidate != this && !suppliers.contains(candidate)) {
 				suppliers.addFirst(candidate);
 			}
 		}
+
+		if (suppliers.size() != suppliersListNormalSize) {
+			System.err.println(suppliers.size() + ", " + suppliersListNormalSize);
+			throw new IllegalStateException("Supplier list size is not equal to L.");
+		}
+
 	}
 
+	/**
+	 * 
+	 */
 	private void selectProduction() {
 
 		if (productionIndex == null) {
