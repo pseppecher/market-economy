@@ -83,6 +83,21 @@ public class Agent {
 		return true;
 	}
 
+	private boolean allSupplierExhausted() {
+		// Si tous les suppliers pour lesquels nous avons du budget sont vides, exit
+		for (Agent currentSupplier : suppliers) {
+
+			var index = currentSupplier.productionIndex;
+
+			if (currentSupplier.inventory[index] > 0 && consumptionBudget[index] > 0) {
+
+				return false;
+
+			}
+		}
+		return true;
+	}
+
 	private void calculateConsumptionBudget() {
 		var saving = expectedIncome * savingPropensity;
 		var consumptionBudgetTotalAmount = Math.max(0, money + expectedIncome - saving);
@@ -127,72 +142,58 @@ public class Agent {
 		var activeSuppliers = performMarketTransactions();
 
 		updateSuppliersList(activeSuppliers);
-		
+
 	}
 
 	/**
 	 * @return
 	 */
 	private Set<Agent> performMarketTransactions() {
-	
+
 		var activeSuppliers = new LinkedHashSet<Agent>();
-	
+
 		while (true) {
-	
+
 			if (allBudgetsCompleted())
 				break;
-	
+
 			if (allSupplierExhausted())
 				break;
-			
+
 			var bestSuppliers = selectBestSuppliers();
-	
+
 			for (var index = 0; index < numberOfGoods; index++) {
-	
+
 				if (consumptionBudget[index] > 0 && bestSuppliers[index] != null) {
-	
+
 					var supplier = bestSuppliers[index];
-	
+
 					var offerTotalValue = supplier.inventory[index] * supplier.price;
 					var transactionValue = Math.min(offerTotalValue, consumptionBudget[index]);
 					var transactionVolume = Math.min(supplier.inventory[index], transactionValue / supplier.price);
-	
+
 					money -= transactionValue;
 					supplier.money += transactionValue;
-	
+
 					consumptionBudget[index] -= transactionValue;
 					supplier.inventory[index] -= transactionVolume;
-	
+
 					activeSuppliers.add(supplier);
-	
+					suppliers.remove(supplier);
+
 					// Stats
-					
+
 					macroData.addValue(MacroVariable.CONSUMPTION_VALUE, index, transactionValue);
 					macroData.addValue(MacroVariable.CONSUMPTION_VOLUME, index, transactionVolume);
-					macroData.addValue(MacroVariable.LABOR_USED, index, transactionVolume / supplier.productivity[index]);
-					
+					macroData.addValue(MacroVariable.LABOR_USED, index,
+							transactionVolume / supplier.productivity[index]);
+
 					// Il serait peut-être utile de compter le nombre de transactions.
 				}
 			}
 		}
-	
+
 		return activeSuppliers;
-	}
-
-	private boolean allSupplierExhausted() {
-		// TODO Auto-generated method stub
-		// Si tous les suppliers pour lesquels nous avons du budget sont vides, exit
-		for (Agent currentSupplier : suppliers) {
-
-			var index = currentSupplier.productionIndex;
-
-			if (currentSupplier.inventory[index] > 0 && consumptionBudget[index] > 0) {
-				
-				return false;
-
-			}
-		} 
-		return true;
 	}
 
 	/**
@@ -206,9 +207,6 @@ public class Agent {
 	 * 
 	 */
 	public void preMarketActions() {
-
-		// TODO Tout ceci ne concerne que la production. Renommer cette méthode ?
-
 		selectProduction();
 		production();
 		calculateConsumptionBudget();
@@ -307,35 +305,14 @@ public class Agent {
 	}
 
 	/**
-	 * @return
-	 */
-	private Agent[] selectBestSuppliers_BAK() { // TODO Remove Me
-
-		var bestSuppliers = new Agent[numberOfGoods];
-
-		for (Agent currentSupplier : suppliers) {
-
-			var index = currentSupplier.productionIndex;
-
-			if (currentSupplier.inventory[index] > 0 && consumptionBudget[index] > 0) {
-
-				if (bestSuppliers[index] == null || currentSupplier.price < bestSuppliers[index].price) {
-					bestSuppliers[index] = currentSupplier;
-				}
-			}
-		}
-
-		// TODO Ça ne va pas du tout ! Il faut aussi tester qu'il a du stock à vendre !
-
-		return bestSuppliers;
-	}
-
-	/**
 	 * 
 	 */
 	private void selectProduction() {
 
 		if (productionIndex == null) {
+			// Initialisation du prix : un au aléatoire, compris entre 0 exclu et 200
+			// inclus.
+			// TODO Il faut paramétriser cet intervalle.
 			while (true) {
 				productionIndex = world.random().nextInt(numberOfGoods);
 				if (productivity() > 0) {
@@ -347,7 +324,10 @@ public class Agent {
 		} else {
 
 			if (inventorySurvivalRate < 1) {
-				// Eventuelle destruction d'une part des stocks antérieurs
+				// Cas d'une marchandise partiellement ou totalement périssable.
+				// Alors destruction d'une part des stocks antérieurs
+				// TODO C'est un peu un cheveu sur la soupe : qu'est-ce que l'érosion des
+				// stocks vient faire dans une méthode censée déterminer la production future ?
 				var before = inventory[this.productionIndex];
 				inventory[this.productionIndex] = inventorySurvivalRate * inventory[this.productionIndex];
 				var product_destruction = before - inventory[this.productionIndex];
@@ -356,22 +336,38 @@ public class Agent {
 			}
 
 			if (world.random().nextDouble() < sectorReviewProbability) {
+				
+				// On arrive enfin à la sélection du secteur de production, proprement dite.
+				
 				expectedIncome = price * productivity();
-				for (int iter = 0; iter < 10; iter++) { // TODO 20 should be a parameter
-					Agent randomAgent = world.pickRandomAgent();
-					Integer newProductionIndex = randomAgent.productionIndex;
+				
+				for (var iter = 0; iter < 10; iter++) {
+					
+					// TODO 10 should be a parameter
+					// TODO Problème : les petits secteurs seront très rarement imités.
+					
+					var randomAgent = world.pickRandomAgent();
+					var newProductionIndex = randomAgent.productionIndex;
 					if (newProductionIndex != productionIndex) {
 						var newPrice = randomAgent.price;
 						var newIncome = newPrice * productivity(newProductionIndex);
 						if (newIncome > expectedIncome) {
+							
 							// Changement de production
+							
+							// Stats
 							macroData.addValue(MacroVariable.PRODUCT_DESTRUCTION, productionIndex,
 									inventory[productionIndex]);
+							// TODO Il pourrait être intéressant de compter et enregistrer le nombre de changements de secteur
+							
+							
+							// Imitation
 							inventory[this.productionIndex] = 0;
 							productionIndex = newProductionIndex;
 							expectedIncome = newIncome;
 							price = newPrice;
 							priceMomentum = 0;
+							
 							break;
 						}
 					}
@@ -433,26 +429,26 @@ public class Agent {
 	 */
 	private void updateSuppliersList(Set<Agent> activeSuppliers) {
 
-		// TODO Nouvelle méthode à TESTER
-
 		var reordered = new LinkedList<>(activeSuppliers);
 		reordered.addAll(suppliers);
+		
+		// FIXME : Il me semble que cette méthode ne fait rien de reordered. Il est calculé mais on ne l'utilise pas.
 
-		if (suppliers.size() != suppliersListNormalSize) {
-			System.err.println(suppliers.size() + ", " + suppliersListNormalSize);
-			throw new IllegalStateException("Supplier list size is not equal to L.");
+		if (reordered.size() != suppliersListNormalSize) {
+			System.err.println(reordered.size() + ", " + suppliersListNormalSize);
+			throw new IllegalStateException("Reordered list size is not equal to L.");
 		} // TODO on pourrait peut-être supprimer ce test ?
 
 		// Il faut maintenant renouveler partiellement la liste en supprimant
 		// les derniers items et en les remplaçant par de nouveaux, tirés au hasard dans
 		// la masse.
-	
+		suppliers.clear();
+		suppliers.addAll(reordered);
+
 		// remove Lowest Ranked Suppliers
-		var size = suppliers.size();
-		if (size >= suppliersListNormalSize) {
-		    var fromIndex = size - numSuppliersToReject;
-		    suppliers.subList(fromIndex, size).clear();
-		}
+		var fromIndex = suppliersListNormalSize - numSuppliersToReject;
+		suppliers.subList(fromIndex, suppliersListNormalSize).clear();
+		
 	}
 
 }

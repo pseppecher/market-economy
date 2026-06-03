@@ -18,7 +18,7 @@ public class ParametersTest0 extends Parameters {
 		var sectorReviewProbability = 0.05f;
 		var savingPropensity = 0.05f;
 		var suppliersListNormalSize = 100;
-		var supplierTurnoverRate = 0.05f;
+		var supplierTurnoverRate = 0.20f;
 		var vBagentPriceSensitivity = .1f; // passer de 0.1 à 0.2 augmente la fréquence des cycles
 		var vBAgentGamma = .33f; // 
 		var vBAgentMomentumGain = .2f; // Passer à .2 augmente la fréquence des cycles
