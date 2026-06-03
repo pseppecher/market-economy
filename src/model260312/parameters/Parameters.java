@@ -41,13 +41,11 @@ public abstract class Parameters {
 
 	private final int suppliersListNormalSize;
 
-	private final int marketMaxIteration;
-
 	private final float supplierTurnoverRate;
 
 	public Parameters(long randomSeed, int populationSize, int nSector, int nProductions, float productivityMax,
 			int nNeeds, float needMax, float vAmomentumGain, float vAMomentumBrake, int simulationDuration, long vBSeed,
-			float sectorReviewProbability, float savingPropensity, int suppliersListNormalSize, int marketMaxIteration,
+			float sectorReviewProbability, float savingPropensity, int suppliersListNormalSize,
 			float supplierTurnoverRate, float vBagentPriceSensitivity, float vBagentGamma,
 			float vBAgentMomentumGain, float vBInventorySurvivalRate) {
 		this.randomSeed = randomSeed;
@@ -64,7 +62,6 @@ public abstract class Parameters {
 		this.sectorReviewProbability = sectorReviewProbability;
 		this.savingPropensity = savingPropensity;
 		this.suppliersListNormalSize = suppliersListNormalSize;
-		this.marketMaxIteration = marketMaxIteration;
 		this.supplierTurnoverRate = supplierTurnoverRate;
 		this.vBAgentPriceSensitivity = vBagentPriceSensitivity;
 		this.vBAgentGamma = vBagentGamma;
@@ -97,13 +94,8 @@ public abstract class Parameters {
 		List.add("sectorReviewProbability," + sectorReviewProbability);
 		List.add("savingPropensity," + savingPropensity);
 		List.add("suppliersListNormalSize," + suppliersListNormalSize);
-		List.add("marketMaxIteration," + marketMaxIteration);
 		List.add("supplierTurnoverRate," + supplierTurnoverRate);
 		return List;
-	}
-
-	public int marketMaxIteration() {
-		return marketMaxIteration;
 	}
 
 	public float needMax() {

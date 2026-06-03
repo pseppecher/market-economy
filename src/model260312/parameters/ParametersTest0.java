@@ -18,7 +18,6 @@ public class ParametersTest0 extends Parameters {
 		var sectorReviewProbability = 0.05f;
 		var savingPropensity = 0.05f;
 		var suppliersListNormalSize = 100;
-		var marketMaxIteration = 3; // Le réduire à 1 = fort effet déflationniste (plus d'invendus ?)
 		var supplierTurnoverRate = 0.05f;
 		var vBagentPriceSensitivity = .1f; // passer de 0.1 à 0.2 augmente la fréquence des cycles
 		var vBAgentGamma = .33f; // 
@@ -27,7 +26,7 @@ public class ParametersTest0 extends Parameters {
 
 		super(randomSeed, populationSize, nSector, nProductions, productivityMax, nNeeds, needMax, vAMomentumGain,
 				vAMomentumBrake, simulationDuration, bSeed, sectorReviewProbability, savingPropensity,
-				suppliersListNormalSize, marketMaxIteration, supplierTurnoverRate, vBagentPriceSensitivity,
+				suppliersListNormalSize, supplierTurnoverRate, vBagentPriceSensitivity,
 				vBAgentGamma, vBAgentMomentumGain, vBInventorySurvivalRate);
 
 	}

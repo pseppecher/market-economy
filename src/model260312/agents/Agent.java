@@ -18,7 +18,6 @@ public class Agent {
 	final private float sectorReviewProbability;
 	final private float savingPropensity;
 	final private int suppliersListNormalSize;
-	final private int marketMaxIteration;
 	final private int numSuppliersToReject;
 
 	// Variables d'état
@@ -64,7 +63,6 @@ public class Agent {
 		savingPropensity = params.savingPropensity();
 		suppliersListNormalSize = params.suppliersListNormalSize();
 		inventory = new float[numberOfGoods];
-		marketMaxIteration = params.marketMaxIteration();
 		numSuppliersToReject = (int) (suppliersListNormalSize * params.supplierTurnoverRate());
 		priceSensitivity = params.vBAgentPriceSensitivity();
 		gamma = params.vBAgentGamma();
@@ -195,52 +193,6 @@ public class Agent {
 			}
 		} 
 		return true;
-	}
-
-	/**
-	 * @return
-	 */
-	private Set<Agent> performMarketTransactionsBAK() {
-
-		var activeSuppliers = new LinkedHashSet<Agent>();
-
-		for (var iter = 0; iter < marketMaxIteration; iter++) {
-
-			if (allBudgetsCompleted())
-				break;
-
-			var bestSuppliers = selectBestSuppliers();
-
-			for (var index = 0; index < numberOfGoods; index++) {
-
-				if (consumptionBudget[index] > 0 && bestSuppliers[index] != null) {
-
-					var supplier = bestSuppliers[index];
-
-					var offerTotalValue = supplier.inventory[index] * supplier.price;
-					var transactionValue = Math.min(offerTotalValue, consumptionBudget[index]);
-					var transactionVolume = Math.min(supplier.inventory[index], transactionValue / supplier.price);
-
-					money -= transactionValue;
-					supplier.money += transactionValue;
-
-					consumptionBudget[index] -= transactionValue;
-					supplier.inventory[index] -= transactionVolume;
-
-					activeSuppliers.add(supplier);
-
-					// Stats
-					
-					macroData.addValue(MacroVariable.CONSUMPTION_VALUE, index, transactionValue);
-					macroData.addValue(MacroVariable.CONSUMPTION_VOLUME, index, transactionVolume);
-					macroData.addValue(MacroVariable.LABOR_USED, index, transactionVolume / supplier.productivity[index]);
-					
-					// Il serait peut-être utile de compter le nombre de transactions.
-				}
-			}
-		}
-
-		return activeSuppliers;
 	}
 
 	/**
