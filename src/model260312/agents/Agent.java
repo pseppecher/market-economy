@@ -136,6 +136,71 @@ public class Agent {
 	 * @return
 	 */
 	private Set<Agent> performMarketTransactions() {
+	
+		var activeSuppliers = new LinkedHashSet<Agent>();
+	
+		while (true) {
+	
+			if (allBudgetsCompleted())
+				break;
+	
+			if (allSupplierExhausted())
+				break;
+			
+			var bestSuppliers = selectBestSuppliers();
+	
+			for (var index = 0; index < numberOfGoods; index++) {
+	
+				if (consumptionBudget[index] > 0 && bestSuppliers[index] != null) {
+	
+					var supplier = bestSuppliers[index];
+	
+					var offerTotalValue = supplier.inventory[index] * supplier.price;
+					var transactionValue = Math.min(offerTotalValue, consumptionBudget[index]);
+					var transactionVolume = Math.min(supplier.inventory[index], transactionValue / supplier.price);
+	
+					money -= transactionValue;
+					supplier.money += transactionValue;
+	
+					consumptionBudget[index] -= transactionValue;
+					supplier.inventory[index] -= transactionVolume;
+	
+					activeSuppliers.add(supplier);
+	
+					// Stats
+					
+					macroData.addValue(MacroVariable.CONSUMPTION_VALUE, index, transactionValue);
+					macroData.addValue(MacroVariable.CONSUMPTION_VOLUME, index, transactionVolume);
+					macroData.addValue(MacroVariable.LABOR_USED, index, transactionVolume / supplier.productivity[index]);
+					
+					// Il serait peut-être utile de compter le nombre de transactions.
+				}
+			}
+		}
+	
+		return activeSuppliers;
+	}
+
+	private boolean allSupplierExhausted() {
+		// TODO Auto-generated method stub
+		// Si tous les suppliers pour lesquels nous avons du budget sont vides, exit
+		for (Agent currentSupplier : suppliers) {
+
+			var index = currentSupplier.productionIndex;
+
+			if (currentSupplier.inventory[index] > 0 && consumptionBudget[index] > 0) {
+				
+				return false;
+
+			}
+		} 
+		return true;
+	}
+
+	/**
+	 * @return
+	 */
+	private Set<Agent> performMarketTransactionsBAK() {
 
 		var activeSuppliers = new LinkedHashSet<Agent>();
 
@@ -164,11 +229,13 @@ public class Agent {
 
 					activeSuppliers.add(supplier);
 
+					// Stats
+					
 					macroData.addValue(MacroVariable.CONSUMPTION_VALUE, index, transactionValue);
 					macroData.addValue(MacroVariable.CONSUMPTION_VOLUME, index, transactionVolume);
-
-					var laborUsed = transactionVolume / supplier.productivity[index];
-					macroData.addValue(MacroVariable.LABOR_USED, index, laborUsed);
+					macroData.addValue(MacroVariable.LABOR_USED, index, transactionVolume / supplier.productivity[index]);
+					
+					// Il serait peut-être utile de compter le nombre de transactions.
 				}
 			}
 		}
