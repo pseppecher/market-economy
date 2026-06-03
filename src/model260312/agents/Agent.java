@@ -273,7 +273,7 @@ public class Agent {
 			var candidate = world.pickRandomAgent();
 
 			if (candidate != this && !suppliers.contains(candidate)) {
-				suppliers.addFirst(candidate);
+				suppliers.add(candidate);
 			}
 		}
 
